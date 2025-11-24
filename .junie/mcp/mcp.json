@@ -1,0 +1,20 @@
+{
+    "mcpServers": {
+        "laravel-boost": {
+            "command": "/Users/franciszekwiczarski/Library/Application Support/Herd/bin/php84",
+            "args": [
+                "/Users/franciszekwiczarski/Herd/Smart-Stock-Trades/artisan",
+                "boost:mcp"
+            ]
+        },
+        "herd": {
+            "command": "/Users/franciszekwiczarski/Library/Application Support/Herd/bin/php84",
+            "args": [
+                "/Applications/Herd.app/Contents/Resources/herd-mcp.phar"
+            ],
+            "env": {
+                "SITE_PATH": "/Users/franciszekwiczarski/Herd/Smart-Stock-Trades"
+            }
+        }
+    }
+}
