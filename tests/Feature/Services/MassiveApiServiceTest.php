@@ -25,25 +25,23 @@ test('throws exception when api key is not configured', function () {
 
 test('fetches historical prices successfully', function () {
     Http::fake([
-        'api.massive.test/stock/AAPL/historical-prices*' => Http::response([
+        'api.massive.test/v2/aggs/ticker/AAPL/range/1/day/2024-01-01/2024-01-02*' => Http::response([
             'results' => [
                 [
-                    'date' => '2024-01-01',
-                    'open' => 100.00,
-                    'high' => 105.00,
-                    'low' => 99.00,
-                    'close' => 103.00,
-                    'volume' => 1000000,
-                    'adjusted_close' => 103.00,
+                    't' => '2024-01-01',
+                    'o' => 100.00,
+                    'h' => 105.00,
+                    'l' => 99.00,
+                    'c' => 103.00,
+                    'v' => 1000000,
                 ],
                 [
-                    'date' => '2024-01-02',
-                    'open' => 103.00,
-                    'high' => 107.00,
-                    'low' => 102.00,
-                    'close' => 106.00,
-                    'volume' => 1200000,
-                    'adjusted_close' => 106.00,
+                    't' => '2024-01-02',
+                    'o' => 103.00,
+                    'h' => 107.00,
+                    'l' => 102.00,
+                    'c' => 106.00,
+                    'v' => 1200000,
                 ],
             ],
         ], 200),
@@ -63,10 +61,12 @@ test('fetches historical prices successfully', function () {
 
 test('fetches stock info successfully', function () {
     Http::fake([
-        'api.massive.test/stock/AAPL' => Http::response([
-            'symbol' => 'AAPL',
-            'name' => 'Apple Inc.',
-            'exchange' => 'NASDAQ',
+        'api.massive.test/v3/reference/tickers/AAPL' => Http::response([
+            'results' => [
+                'ticker' => 'AAPL',
+                'name' => 'Apple Inc.',
+                'primary_exchange' => 'XNAS',
+            ],
         ], 200),
     ]);
 
@@ -76,12 +76,12 @@ test('fetches stock info successfully', function () {
     expect($result)->toHaveKeys(['symbol', 'name', 'exchange']);
     expect($result['symbol'])->toBe('AAPL');
     expect($result['name'])->toBe('Apple Inc.');
-    expect($result['exchange'])->toBe('NASDAQ');
+    expect($result['exchange'])->toBe('XNAS');
 });
 
 test('throws authentication exception on 401', function () {
     Http::fake([
-        'api.massive.test/stock/AAPL' => Http::response([], 401),
+        'api.massive.test/v3/reference/tickers/AAPL' => Http::response([], 401),
     ]);
 
     $service = new MassiveApiService;
@@ -92,7 +92,7 @@ test('throws authentication exception on 401', function () {
 
 test('throws not found exception on 404', function () {
     Http::fake([
-        'api.massive.test/stock/INVALID' => Http::response([], 404),
+        'api.massive.test/v3/reference/tickers/INVALID' => Http::response([], 404),
     ]);
 
     $service = new MassiveApiService;
@@ -103,7 +103,7 @@ test('throws not found exception on 404', function () {
 
 test('throws rate limit exception on 429', function () {
     Http::fake([
-        'api.massive.test/stock/AAPL' => Http::response([], 429),
+        'api.massive.test/v3/reference/tickers/AAPL' => Http::response([], 429),
     ]);
 
     $service = new MassiveApiService;
@@ -114,15 +114,15 @@ test('throws rate limit exception on 429', function () {
 
 test('caches historical prices data', function () {
     Http::fake([
-        'api.massive.test/stock/AAPL/historical-prices*' => Http::response([
+        'api.massive.test/v2/aggs/ticker/AAPL/range/1/day/2024-01-01/2024-01-01*' => Http::response([
             'results' => [
                 [
-                    'date' => '2024-01-01',
-                    'open' => 100.00,
-                    'high' => 105.00,
-                    'low' => 99.00,
-                    'close' => 103.00,
-                    'volume' => 1000000,
+                    't' => '2024-01-01',
+                    'o' => 100.00,
+                    'h' => 105.00,
+                    'l' => 99.00,
+                    'c' => 103.00,
+                    'v' => 1000000,
                 ],
             ],
         ], 200),
@@ -144,10 +144,12 @@ test('caches historical prices data', function () {
 
 test('caches stock info data', function () {
     Http::fake([
-        'api.massive.test/stock/AAPL' => Http::response([
-            'symbol' => 'AAPL',
-            'name' => 'Apple Inc.',
-            'exchange' => 'NASDAQ',
+        'api.massive.test/v3/reference/tickers/AAPL' => Http::response([
+            'results' => [
+                'ticker' => 'AAPL',
+                'name' => 'Apple Inc.',
+                'primary_exchange' => 'XNAS',
+            ],
         ], 200),
     ]);
 
@@ -185,31 +187,31 @@ test('clears rate limit', function () {
 
 test('filters out incomplete price data', function () {
     Http::fake([
-        'api.massive.test/stock/AAPL/historical-prices*' => Http::response([
+        'api.massive.test/v2/aggs/ticker/AAPL/range/1/day/2024-01-01/2024-01-03*' => Http::response([
             'results' => [
                 [
-                    'date' => '2024-01-01',
-                    'open' => 100.00,
-                    'high' => 105.00,
-                    'low' => 99.00,
-                    'close' => 103.00,
-                    'volume' => 1000000,
+                    't' => '2024-01-01',
+                    'o' => 100.00,
+                    'h' => 105.00,
+                    'l' => 99.00,
+                    'c' => 103.00,
+                    'v' => 1000000,
                 ],
                 [
-                    'date' => '2024-01-02',
-                    'open' => null, // Missing required field
-                    'high' => 107.00,
-                    'low' => 102.00,
-                    'close' => 106.00,
-                    'volume' => 1200000,
+                    't' => '2024-01-02',
+                    'o' => null, // Missing required field
+                    'h' => 107.00,
+                    'l' => 102.00,
+                    'c' => 106.00,
+                    'v' => 1200000,
                 ],
                 [
-                    'date' => '2024-01-03',
-                    'open' => 106.00,
-                    'high' => 108.00,
-                    'low' => 105.00,
-                    'close' => 107.00,
-                    'volume' => 1100000,
+                    't' => '2024-01-03',
+                    'o' => 106.00,
+                    'h' => 108.00,
+                    'l' => 105.00,
+                    'c' => 107.00,
+                    'v' => 1100000,
                 ],
             ],
         ], 200),
@@ -227,7 +229,7 @@ test('filters out incomplete price data', function () {
 
 test('throws exception when api returns invalid response structure', function () {
     Http::fake([
-        'api.massive.test/stock/AAPL/historical-prices*' => Http::response([
+        'api.massive.test/v2/aggs/ticker/AAPL/range/1/day/2024-01-01/2024-01-02*' => Http::response([
             'invalid' => 'structure',
         ], 200),
     ]);
