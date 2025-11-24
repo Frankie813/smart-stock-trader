@@ -15,30 +15,30 @@ beforeEach(function () {
 
 test('fetches historical data successfully', function () {
     Http::fake([
-        'api.massive.test/stock/AAPL' => Http::response([
-            'symbol' => 'AAPL',
-            'name' => 'Apple Inc.',
-            'exchange' => 'NASDAQ',
+        'api.massive.test/v3/reference/tickers/AAPL' => Http::response([
+            'results' => [
+                'ticker' => 'AAPL',
+                'name' => 'Apple Inc.',
+                'primary_exchange' => 'XNAS',
+            ],
         ], 200),
-        'api.massive.test/stock/AAPL/historical-prices*' => Http::response([
+        'api.massive.test/v2/aggs/ticker/AAPL/range/1/day/2024-01-01/2024-01-02*' => Http::response([
             'results' => [
                 [
-                    'date' => '2024-01-01',
-                    'open' => 100.00,
-                    'high' => 105.00,
-                    'low' => 99.00,
-                    'close' => 103.00,
-                    'volume' => 1000000,
-                    'adjusted_close' => 103.00,
+                    't' => '2024-01-01',
+                    'o' => 100.00,
+                    'h' => 105.00,
+                    'l' => 99.00,
+                    'c' => 103.00,
+                    'v' => 1000000,
                 ],
                 [
-                    'date' => '2024-01-02',
-                    'open' => 103.00,
-                    'high' => 107.00,
-                    'low' => 102.00,
-                    'close' => 106.00,
-                    'volume' => 1200000,
-                    'adjusted_close' => 106.00,
+                    't' => '2024-01-02',
+                    'o' => 103.00,
+                    'h' => 107.00,
+                    'l' => 102.00,
+                    'c' => 106.00,
+                    'v' => 1200000,
                 ],
             ],
         ], 200),
@@ -55,7 +55,7 @@ test('fetches historical data successfully', function () {
 
     $stock = Stock::where('symbol', 'AAPL')->first();
     expect($stock->name)->toBe('Apple Inc.');
-    expect($stock->exchange)->toBe('NASDAQ');
+    expect($stock->exchange)->toBe('XNAS');
 });
 
 test('validates symbol format', function () {
@@ -83,20 +83,22 @@ test('validates start date before end date', function () {
 
 test('uses default dates when not provided', function () {
     Http::fake([
-        'api.massive.test/stock/TSLA' => Http::response([
-            'symbol' => 'TSLA',
-            'name' => 'Tesla, Inc.',
-            'exchange' => 'NASDAQ',
+        'api.massive.test/v3/reference/tickers/TSLA' => Http::response([
+            'results' => [
+                'ticker' => 'TSLA',
+                'name' => 'Tesla, Inc.',
+                'primary_exchange' => 'XNAS',
+            ],
         ], 200),
-        'api.massive.test/stock/TSLA/historical-prices*' => Http::response([
+        'api.massive.test/v2/aggs/ticker/TSLA/*' => Http::response([
             'results' => [
                 [
-                    'date' => '2024-01-01',
-                    'open' => 100.00,
-                    'high' => 105.00,
-                    'low' => 99.00,
-                    'close' => 103.00,
-                    'volume' => 1000000,
+                    't' => '2024-01-01',
+                    'o' => 100.00,
+                    'h' => 105.00,
+                    'l' => 99.00,
+                    'c' => 103.00,
+                    'v' => 1000000,
                 ],
             ],
         ], 200),
@@ -117,15 +119,15 @@ test('uses existing stock record', function () {
     ]);
 
     Http::fake([
-        'api.massive.test/stock/MSFT/historical-prices*' => Http::response([
+        'api.massive.test/v2/aggs/ticker/MSFT/*' => Http::response([
             'results' => [
                 [
-                    'date' => '2024-01-01',
-                    'open' => 100.00,
-                    'high' => 105.00,
-                    'low' => 99.00,
-                    'close' => 103.00,
-                    'volume' => 1000000,
+                    't' => '2024-01-01',
+                    'o' => 100.00,
+                    'h' => 105.00,
+                    'l' => 99.00,
+                    'c' => 103.00,
+                    'v' => 1000000,
                 ],
             ],
         ], 200),
@@ -155,16 +157,15 @@ test('updates existing price records when data changes', function () {
     ]);
 
     Http::fake([
-        'api.massive.test/stock/NVDA/historical-prices*' => Http::response([
+        'api.massive.test/v2/aggs/ticker/NVDA/*' => Http::response([
             'results' => [
                 [
-                    'date' => '2024-01-01',
-                    'open' => 101.00, // Changed
-                    'high' => 106.00, // Changed
-                    'low' => 99.00,
-                    'close' => 104.00, // Changed
-                    'volume' => 1000000,
-                    'adjusted_close' => 104.00,
+                    't' => '2024-01-01',
+                    'o' => 101.00, // Changed
+                    'h' => 106.00, // Changed
+                    'l' => 99.00,
+                    'c' => 104.00, // Changed
+                    'v' => 1000000,
                 ],
             ],
         ], 200),
@@ -196,15 +197,15 @@ test('skips records with no changes', function () {
     ]);
 
     Http::fake([
-        'api.massive.test/stock/GOOG/historical-prices*' => Http::response([
+        'api.massive.test/v2/aggs/ticker/GOOG/*' => Http::response([
             'results' => [
                 [
-                    'date' => '2024-01-01',
-                    'open' => 100.00,
-                    'high' => 105.00,
-                    'low' => 99.00,
-                    'close' => 103.00,
-                    'volume' => 1000000,
+                    't' => '2024-01-01',
+                    'o' => 100.00,
+                    'h' => 105.00,
+                    'l' => 99.00,
+                    'c' => 103.00,
+                    'v' => 1000000,
                 ],
             ],
         ], 200),
@@ -221,7 +222,7 @@ test('skips records with no changes', function () {
 
 test('handles api errors gracefully', function () {
     Http::fake([
-        'api.massive.test/stock/FAIL' => Http::response([], 404),
+        'api.massive.test/v3/reference/tickers/FAIL' => Http::response([], 404),
     ]);
 
     artisan('fetch:historical-data', [
@@ -235,11 +236,13 @@ test('handles api errors gracefully', function () {
 
 test('handles empty api response', function () {
     Http::fake([
-        'api.massive.test/stock/EMPTY' => Http::response([
-            'symbol' => 'EMPTY',
-            'name' => 'Empty Stock',
+        'api.massive.test/v3/reference/tickers/EMPTY' => Http::response([
+            'results' => [
+                'ticker' => 'EMPTY',
+                'name' => 'Empty Stock',
+            ],
         ], 200),
-        'api.massive.test/stock/EMPTY/historical-prices*' => Http::response([
+        'api.massive.test/v2/aggs/ticker/EMPTY/*' => Http::response([
             'results' => [],
         ], 200),
     ]);
@@ -256,19 +259,21 @@ test('handles empty api response', function () {
 
 test('converts symbol to uppercase', function () {
     Http::fake([
-        'api.massive.test/stock/AAPL' => Http::response([
-            'symbol' => 'AAPL',
-            'name' => 'Apple Inc.',
+        'api.massive.test/v3/reference/tickers/AAPL' => Http::response([
+            'results' => [
+                'ticker' => 'AAPL',
+                'name' => 'Apple Inc.',
+            ],
         ], 200),
-        'api.massive.test/stock/AAPL/historical-prices*' => Http::response([
+        'api.massive.test/v2/aggs/ticker/AAPL/*' => Http::response([
             'results' => [
                 [
-                    'date' => '2024-01-01',
-                    'open' => 100.00,
-                    'high' => 105.00,
-                    'low' => 99.00,
-                    'close' => 103.00,
-                    'volume' => 1000000,
+                    't' => '2024-01-01',
+                    'o' => 100.00,
+                    'h' => 105.00,
+                    'l' => 99.00,
+                    'c' => 103.00,
+                    'v' => 1000000,
                 ],
             ],
         ], 200),

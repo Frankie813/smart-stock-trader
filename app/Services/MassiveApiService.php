@@ -21,7 +21,7 @@ class MassiveApiService
     public function __construct()
     {
         $this->apiKey = config('services.massive.api_key');
-        $this->baseUrl = config('services.massive.base_url', 'https://api.massive.com/v1');
+        $this->baseUrl = config('services.massive.base_url', 'https://api.massive.com');
         $this->rateLimit = config('services.massive.rate_limit', 5);
     }
 
@@ -65,7 +65,8 @@ class MassiveApiService
 
         $this->checkRateLimit();
 
-        $url = "{$this->baseUrl}/stock/{$symbol}/historical-prices";
+        // Massive.com API endpoint format: /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to}
+        $url = "{$this->baseUrl}/v2/aggs/ticker/{$symbol}/range/1/day/{$startDate->format('Y-m-d')}/{$endDate->format('Y-m-d')}";
 
         Log::channel('massive-api')->info("Fetching historical prices for {$symbol}", [
             'url' => $url,
@@ -83,8 +84,9 @@ class MassiveApiService
                     'Accept' => 'application/json',
                 ])
                 ->get($url, [
-                    'from' => $startDate->format('Y-m-d'),
-                    'to' => $endDate->format('Y-m-d'),
+                    'adjusted' => 'true',
+                    'sort' => 'asc',
+                    'limit' => 50000,
                 ]);
 
             $this->incrementRateLimit();
@@ -165,7 +167,8 @@ class MassiveApiService
 
         $this->checkRateLimit();
 
-        $url = "{$this->baseUrl}/stock/{$symbol}";
+        // Massive.com API endpoint format: /v3/reference/tickers/{ticker}
+        $url = "{$this->baseUrl}/v3/reference/tickers/{$symbol}";
 
         Log::channel('massive-api')->info("Fetching stock info for {$symbol}", [
             'url' => $url,
@@ -209,10 +212,13 @@ class MassiveApiService
 
             $data = $response->json();
 
+            // Massive.com v3 API returns data in 'results' wrapper
+            $ticker = $data['results'] ?? $data;
+
             $stockInfo = [
-                'symbol' => $data['symbol'] ?? $symbol,
-                'name' => $data['name'] ?? null,
-                'exchange' => $data['exchange'] ?? null,
+                'symbol' => $ticker['ticker'] ?? $symbol,
+                'name' => $ticker['name'] ?? null,
+                'exchange' => $ticker['primary_exchange'] ?? $ticker['exchange'] ?? null,
             ];
 
             // Cache for 24 hours (stock info doesn't change often)
