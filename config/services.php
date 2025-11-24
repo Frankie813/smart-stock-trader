@@ -35,4 +35,10 @@ return [
         ],
     ],
 
+    'massive' => [
+        'api_key' => env('MASSIVE_API_KEY'),
+        'base_url' => env('MASSIVE_API_BASE_URL', 'https://api.massive.com/v1'),
+        'rate_limit' => 5, // calls per minute
+    ],
+
 ];
