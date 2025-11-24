@@ -246,8 +246,16 @@ class MassiveApiService
     protected function transformPriceData(array $results): array
     {
         return collect($results)->map(function ($item) {
+            // Handle date/timestamp conversion
+            $date = $item['date'] ?? $item['t'] ?? null;
+
+            // If date is a Unix timestamp in milliseconds, convert to Y-m-d format
+            if (is_numeric($date) && $date > 946684800000) { // After year 2000 in ms
+                $date = Carbon::createFromTimestampMs($date)->format('Y-m-d');
+            }
+
             return [
-                'date' => $item['date'] ?? $item['t'] ?? null,
+                'date' => $date,
                 'open' => $item['open'] ?? $item['o'] ?? null,
                 'high' => $item['high'] ?? $item['h'] ?? null,
                 'low' => $item['low'] ?? $item['l'] ?? null,
