@@ -13,6 +13,7 @@ class Experiment extends Model
 
     protected $fillable = [
         'model_configuration_id',
+        'stock_ids',
         'name',
         'start_date',
         'end_date',
@@ -28,6 +29,7 @@ class Experiment extends Model
     protected function casts(): array
     {
         return [
+            'stock_ids' => 'array',
             'start_date' => 'date',
             'end_date' => 'date',
             'initial_capital' => 'decimal:2',
@@ -91,7 +93,7 @@ class Experiment extends Model
      */
     public function getDurationAttribute()
     {
-        if (!$this->started_at || !$this->completed_at) {
+        if (! $this->started_at || ! $this->completed_at) {
             return null;
         }
 

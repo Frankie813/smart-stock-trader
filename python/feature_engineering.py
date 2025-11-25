@@ -159,7 +159,7 @@ def add_volume_indicators(df: pd.DataFrame) -> pd.DataFrame:
     df['volume_change'] = df['volume'].pct_change().fillna(0)
 
     # Volume moving average (20-day)
-    df['volume_sma_20'] = df['volume'].rolling(window=20).mean().fillna(method='bfill')
+    df['volume_sma_20'] = df['volume'].rolling(window=20).mean().bfill()
 
     # On-Balance Volume (OBV)
     obv = OnBalanceVolumeIndicator(close=df['close'], volume=df['volume'], fillna=True)

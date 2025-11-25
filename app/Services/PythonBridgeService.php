@@ -17,11 +17,55 @@ class PythonBridgeService
     {
         $this->pythonPath = base_path('python/venv/bin/python');
         $this->scriptsPath = base_path('python');
+    }
 
-        // Validate Python path
+    /**
+     * Validate that Python environment is available
+     */
+    protected function validatePythonEnvironment(): void
+    {
         if (! file_exists($this->pythonPath)) {
-            throw new Exception("Python virtual environment not found at: {$this->pythonPath}");
+            throw new Exception("Python virtual environment not found at: {$this->pythonPath}. Please set up the Python environment first.");
         }
+    }
+
+    /**
+     * Extract JSON from Python script output (ignoring log lines)
+     */
+    protected function extractJsonFromOutput(string $output): ?array
+    {
+        // Python scripts output logs to stdout, then the final JSON result
+        // We need to find where the JSON starts (look for a line starting with {)
+
+        $lines = explode("\n", $output);
+
+        // Find the first line that starts with { (this should be the JSON root)
+        for ($i = count($lines) - 1; $i >= 0; $i--) {
+            $line = trim($lines[$i]);
+            if ($line === '{') {
+                // Found the start of JSON, take everything from this line onwards
+                $jsonString = implode("\n", array_slice($lines, $i));
+
+                // Try to parse it
+                $json = json_decode($jsonString, true);
+                if (json_last_error() === JSON_ERROR_NONE) {
+                    return $json;
+                }
+            }
+        }
+
+        // Fallback: try to find any line with single { and parse from there
+        foreach ($lines as $i => $line) {
+            if (trim($line) === '{') {
+                $jsonString = implode("\n", array_slice($lines, $i));
+                $json = json_decode($jsonString, true);
+                if (json_last_error() === JSON_ERROR_NONE) {
+                    return $json;
+                }
+            }
+        }
+
+        return null;
     }
 
     /**
@@ -29,6 +73,8 @@ class PythonBridgeService
      */
     public function exportStockData(Stock $stock, ?Carbon $startDate = null, ?Carbon $endDate = null): string
     {
+        $this->validatePythonEnvironment();
+
         $startDate = $startDate ?? Carbon::now()->subYears(2);
         $endDate = $endDate ?? Carbon::now();
 
@@ -92,6 +138,8 @@ class PythonBridgeService
      */
     public function trainModel(Stock $stock, array $config = []): array
     {
+        $this->validatePythonEnvironment();
+
         Log::info("Training model for {$stock->symbol}");
 
         // Export data first
@@ -115,15 +163,21 @@ class PythonBridgeService
             throw new Exception('Failed to execute Python training script');
         }
 
-        // Parse JSON response
-        $result = json_decode($output, true);
+        // Extract JSON from output (skip log lines)
+        $result = $this->extractJsonFromOutput($output);
 
-        if (json_last_error() !== JSON_ERROR_NONE) {
-            Log::error('Failed to parse Python output', [
-                'output' => $output,
-                'error' => json_last_error_msg(),
+        if ($result === null) {
+            // Debug: inspect the actual output structure
+            $jsonStart = strrpos($output, '{');
+            $jsonPortion = $jsonStart !== false ? substr($output, $jsonStart, 200) : 'No { found';
+
+            Log::error('Failed to parse Python training output', [
+                'output_length' => strlen($output),
+                'json_start_pos' => $jsonStart,
+                'json_portion' => $jsonPortion,
+                'last_100_chars' => substr($output, -100),
             ]);
-            throw new Exception("Failed to parse Python output: {$output}");
+            throw new Exception('Failed to parse Python output: no valid JSON found');
         }
 
         // Check for errors
@@ -145,6 +199,8 @@ class PythonBridgeService
      */
     public function runBacktest(Stock $stock, float $initialCapital = 10000.0): array
     {
+        $this->validatePythonEnvironment();
+
         Log::info("Running backtest for {$stock->symbol}");
 
         // Build Python command
@@ -166,15 +222,15 @@ class PythonBridgeService
             throw new Exception('Failed to execute Python backtest script');
         }
 
-        // Parse JSON response
-        $result = json_decode($output, true);
+        // Extract JSON from output (skip log lines)
+        $result = $this->extractJsonFromOutput($output);
 
-        if (json_last_error() !== JSON_ERROR_NONE) {
+        if ($result === null) {
             Log::error('Failed to parse Python output', [
                 'output' => $output,
-                'error' => json_last_error_msg(),
+                'error' => 'No valid JSON found in output',
             ]);
-            throw new Exception("Failed to parse Python output: {$output}");
+            throw new Exception('Failed to parse Python output: no valid JSON found');
         }
 
         // Check for errors
@@ -229,14 +285,20 @@ class PythonBridgeService
      */
     public function getPythonInfo(): array
     {
-        $command = sprintf('%s --version 2>&1', escapeshellarg($this->pythonPath));
-        $version = shell_exec($command);
+        $venvExists = file_exists($this->pythonPath);
+
+        if ($venvExists) {
+            $command = sprintf('%s --version 2>&1', escapeshellarg($this->pythonPath));
+            $version = shell_exec($command);
+        } else {
+            $version = 'Virtual environment not found';
+        }
 
         return [
             'python_path' => $this->pythonPath,
             'scripts_path' => $this->scriptsPath,
             'python_version' => trim($version ?? 'Unknown'),
-            'venv_exists' => file_exists($this->pythonPath),
+            'venv_exists' => $venvExists,
         ];
     }
 }

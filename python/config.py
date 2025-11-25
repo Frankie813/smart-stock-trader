@@ -28,7 +28,6 @@ XGBOOST_PARAMS = {
     'min_child_weight': 1,
     'random_state': 42,
     'eval_metric': 'logloss',
-    'use_label_encoder': False,
 }
 
 # Train/test split ratio

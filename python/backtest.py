@@ -182,6 +182,7 @@ def calculate_backtest_metrics(trades_df: pd.DataFrame, y_true: np.ndarray,
         # Additional metrics
         final_capital = trades_df['capital'].iloc[-1] if len(trades_df) > 0 else initial_capital
         total_return = ((final_capital - initial_capital) / initial_capital) * 100
+        total_return_dollars = final_capital - initial_capital
 
         # Winning and losing trade stats
         winning_trades = trades_df[trades_df['profit_loss'] > 0]
@@ -199,6 +200,7 @@ def calculate_backtest_metrics(trades_df: pd.DataFrame, y_true: np.ndarray,
             'initial_capital': float(initial_capital),
             'final_capital': float(final_capital),
             'total_return_pct': float(total_return),
+            'total_return_dollars': float(total_return_dollars),
             'winning_trades': int(len(winning_trades)),
             'losing_trades': int(len(losing_trades)),
             'avg_win': float(avg_win),

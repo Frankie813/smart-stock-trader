@@ -130,6 +130,10 @@ def calculate_trading_metrics(trades_df: pd.DataFrame) -> Dict[str, float]:
     drawdown = cumulative_returns - running_max
     max_drawdown = drawdown.min()
 
+    # Calculate largest win and loss
+    largest_win = trades_df['profit_loss'].max() if not trades_df.empty else 0.0
+    largest_loss = trades_df['profit_loss'].min() if not trades_df.empty else 0.0
+
     return {
         'total_trades': int(total_trades),
         'total_profit_loss': float(total_profit_loss),
@@ -137,6 +141,8 @@ def calculate_trading_metrics(trades_df: pd.DataFrame) -> Dict[str, float]:
         'avg_profit_per_trade': float(avg_profit_per_trade),
         'sharpe_ratio': float(sharpe_ratio),
         'max_drawdown': float(max_drawdown),
+        'largest_win': float(largest_win),
+        'largest_loss': float(largest_loss),
     }
 
 
