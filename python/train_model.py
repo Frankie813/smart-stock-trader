@@ -1,295 +1,335 @@
-#!/usr/bin/env python3
 """
-Train XGBoost model for stock price prediction
-
-Usage: python train_model.py AAPL
+Model Training Script for Day Trading
+Trains XGBoost model with enhanced features
 """
 
 import sys
-import logging
-from datetime import datetime
-from pathlib import Path
-
+import json
 import pandas as pd
 import numpy as np
+import xgboost as xgb
 import joblib
+from datetime import datetime
+from pathlib import Path
 from sklearn.model_selection import train_test_split
-from xgboost import XGBClassifier
+from sklearn.metrics import accuracy_score, classification_report, confusion_matrix
 
-import config
-from feature_engineering import engineer_features, get_feature_columns
-from utils import (
-    logger,
-    load_data_from_csv,
-    calculate_metrics,
-    save_results,
-    handle_error,
-    validate_dataframe
-)
-
-# Configure logging
-logger = logging.getLogger(__name__)
+# Import feature engineering
+from feature_engineering import engineer_features, get_feature_list, get_feature_importance_report
 
 
-def prepare_data(symbol: str):
+def load_stock_data(stock_symbol: str, data_path: str = None) -> pd.DataFrame:
     """
-    Load and prepare data for training
+    Load stock price data from CSV
 
     Args:
-        symbol: Stock symbol
+        stock_symbol: Stock ticker symbol
+        data_path: Path to data directory
 
     Returns:
-        Tuple of (X_train, X_test, y_train, y_test, feature_names, df_with_features)
+        DataFrame with OHLCV data
     """
-    logger.info(f"Loading data for {symbol}")
+    if data_path is None:
+        data_path = Path(__file__).parent / 'data'
 
-    # Load raw data
-    df = load_data_from_csv(symbol)
+    csv_file = Path(data_path) / f'{stock_symbol}.csv'
 
-    # Validate minimum samples
-    if len(df) < config.MIN_TRAINING_SAMPLES:
-        raise ValueError(
-            f"Insufficient data: {len(df)} rows. Minimum required: {config.MIN_TRAINING_SAMPLES}"
-        )
+    if not csv_file.exists():
+        raise FileNotFoundError(f"Data file not found: {csv_file}")
 
-    logger.info(f"Loaded {len(df)} rows of data")
+    df = pd.read_csv(csv_file)
 
-    # Engineer features
-    df_with_features = engineer_features(df, include_target=True)
+    # Ensure required columns exist
+    required_cols = ['date', 'open', 'high', 'low', 'close', 'volume']
+    missing_cols = [col for col in required_cols if col not in df.columns]
 
-    logger.info(f"After feature engineering: {len(df_with_features)} rows")
+    if missing_cols:
+        raise ValueError(f"Missing required columns: {missing_cols}")
 
-    # Get feature columns
-    feature_cols = get_feature_columns(df_with_features)
-
-    # Prepare X (features) and y (target)
-    X = df_with_features[feature_cols].values
-    y = df_with_features['target'].values
-
-    logger.info(f"Features shape: {X.shape}, Target shape: {y.shape}")
-
-    # Split into train and test sets
-    X_train, X_test, y_train, y_test = train_test_split(
-        X, y,
-        test_size=config.TEST_SIZE,
-        random_state=config.RANDOM_STATE,
-        shuffle=False  # Maintain temporal order for time series
-    )
-
-    logger.info(f"Train set: {X_train.shape}, Test set: {X_test.shape}")
-    logger.info(f"Train positive rate: {y_train.mean():.2%}, Test positive rate: {y_test.mean():.2%}")
-
-    return X_train, X_test, y_train, y_test, feature_cols, df_with_features
+    return df
 
 
-def train_xgboost_model(X_train, y_train, X_test, y_test):
+def prepare_training_data(df: pd.DataFrame, config: dict, train_size: float = 0.8):
+    """
+    Prepare data for training
+
+    Args:
+        df: DataFrame with engineered features
+        config: Configuration dictionary
+        train_size: Proportion of data for training (0.8 = 80%)
+
+    Returns:
+        Tuple of (X_train, X_test, y_train, y_test, feature_names)
+    """
+    # Get feature columns (exclude OHLCV, date, target)
+    feature_cols = get_feature_list(df)
+
+    # Separate features and target
+    X = df[feature_cols].values
+    y = df['target'].values
+    dates = df['date'].values
+
+    # Split by time (not random!)
+    # We want to train on old data, test on recent data
+    split_idx = int(len(df) * train_size)
+
+    X_train = X[:split_idx]
+    X_test = X[split_idx:]
+    y_train = y[:split_idx]
+    y_test = y[split_idx:]
+
+    train_dates = dates[:split_idx]
+    test_dates = dates[split_idx:]
+
+    print(f"\nTraining set: {len(X_train)} samples ({train_dates[0]} to {train_dates[-1]})")
+    print(f"Test set: {len(X_test)} samples ({test_dates[0]} to {test_dates[-1]})")
+    print(f"Features: {len(feature_cols)}")
+    print(f"\nTarget distribution (train): {np.bincount(y_train)}")
+    print(f"Target distribution (test): {np.bincount(y_test)}")
+
+    return X_train, X_test, y_train, y_test, feature_cols
+
+
+def train_xgboost_model(X_train, y_train, X_test, y_test, hyperparameters: dict):
     """
     Train XGBoost classifier
 
     Args:
-        X_train: Training features
-        y_train: Training target
-        X_test: Test features
-        y_test: Test target
+        X_train, y_train: Training data
+        X_test, y_test: Test data
+        hyperparameters: Model hyperparameters
 
     Returns:
-        Trained XGBoost model
+        Trained model
     """
-    logger.info("Training XGBoost model...")
+    print("\n" + "="*60)
+    print("TRAINING XGBOOST MODEL")
+    print("="*60)
 
-    # Initialize model
-    model = XGBClassifier(**config.XGBOOST_PARAMS)
+    # Create model with hyperparameters from configuration
+    model = xgb.XGBClassifier(
+        n_estimators=hyperparameters.get('n_estimators', 100),
+        max_depth=hyperparameters.get('max_depth', 5),
+        learning_rate=hyperparameters.get('learning_rate', 0.1),
+        subsample=hyperparameters.get('subsample', 0.8),
+        colsample_bytree=hyperparameters.get('colsample_bytree', 0.8),
+        min_child_weight=hyperparameters.get('min_child_weight', 1),
+        gamma=hyperparameters.get('gamma', 0),
+        objective='binary:logistic',
+        eval_metric='logloss',
+        random_state=42,
+        n_jobs=-1
+    )
 
-    # Train model
+    # Train with early stopping
     model.fit(
-        X_train, y_train,
-        eval_set=[(X_test, y_test)],
+        X_train,
+        y_train,
+        eval_set=[(X_train, y_train), (X_test, y_test)],
         verbose=False
     )
 
-    logger.info("Model training complete")
+    # Evaluate
+    train_pred = model.predict(X_train)
+    test_pred = model.predict(X_test)
+
+    train_accuracy = accuracy_score(y_train, train_pred)
+    test_accuracy = accuracy_score(y_test, test_pred)
+
+    print(f"\nTraining Accuracy: {train_accuracy:.4f} ({train_accuracy*100:.2f}%)")
+    print(f"Test Accuracy: {test_accuracy:.4f} ({test_accuracy*100:.2f}%)")
+
+    # Check for overfitting
+    if train_accuracy - test_accuracy > 0.1:
+        print("\n⚠️  WARNING: Possible overfitting detected!")
+        print(f"   Gap between train and test: {(train_accuracy - test_accuracy)*100:.2f}%")
+
+    # Confusion matrix
+    print(f"\nConfusion Matrix (Test Set):")
+    cm = confusion_matrix(y_test, test_pred)
+    print(cm)
+    print(f"\nTrue Negatives: {cm[0,0]}, False Positives: {cm[0,1]}")
+    print(f"False Negatives: {cm[1,0]}, True Positives: {cm[1,1]}")
 
     return model
 
 
-def evaluate_model(model, X_train, y_train, X_test, y_test):
-    """
-    Evaluate model performance
-
-    Args:
-        model: Trained model
-        X_train: Training features
-        y_train: Training target
-        X_test: Test features
-        y_test: Test target
-
-    Returns:
-        Dictionary of evaluation metrics
-    """
-    logger.info("Evaluating model...")
-
-    # Predictions
-    y_train_pred = model.predict(X_train)
-    y_test_pred = model.predict(X_test)
-
-    y_train_pred_proba = model.predict_proba(X_train)[:, 1]
-    y_test_pred_proba = model.predict_proba(X_test)[:, 1]
-
-    # Calculate metrics
-    train_metrics = calculate_metrics(y_train, y_train_pred, y_train_pred_proba)
-    test_metrics = calculate_metrics(y_test, y_test_pred, y_test_pred_proba)
-
-    logger.info(f"Train Accuracy: {train_metrics['accuracy']:.4f}")
-    logger.info(f"Test Accuracy: {test_metrics['accuracy']:.4f}")
-    logger.info(f"Test Precision: {test_metrics['precision']:.4f}")
-    logger.info(f"Test Recall: {test_metrics['recall']:.4f}")
-    logger.info(f"Test F1 Score: {test_metrics['f1_score']:.4f}")
-
-    return {
-        'train_metrics': train_metrics,
-        'test_metrics': test_metrics,
-    }
-
-
-def get_feature_importance(model, feature_names):
-    """
-    Get feature importance from trained model
-
-    Args:
-        model: Trained XGBoost model
-        feature_names: List of feature names
-
-    Returns:
-        Dictionary of feature importance scores
-    """
-    importance_scores = model.feature_importances_
-
-    # Create feature importance dictionary
-    feature_importance = {
-        name: float(score)
-        for name, score in zip(feature_names, importance_scores)
-    }
-
-    # Sort by importance
-    feature_importance = dict(
-        sorted(feature_importance.items(), key=lambda x: x[1], reverse=True)
-    )
-
-    # Log top 10 features
-    logger.info("Top 10 most important features:")
-    for i, (feature, score) in enumerate(list(feature_importance.items())[:10], 1):
-        logger.info(f"  {i}. {feature}: {score:.4f}")
-
-    return feature_importance
-
-
-def save_model(model, symbol: str, metadata: dict):
+def save_model(model, stock_symbol: str, metadata: dict, model_path: str = None):
     """
     Save trained model and metadata
 
     Args:
-        model: Trained model
-        symbol: Stock symbol
-        metadata: Model metadata
+        model: Trained XGBoost model
+        stock_symbol: Stock ticker
+        metadata: Dictionary with training info
+        model_path: Path to save model
 
     Returns:
-        Path to saved model file
+        Path where model was saved
     """
-    model_filename = f"{symbol}_model.pkl"
-    model_path = config.MODELS_DIR / model_filename
+    if model_path is None:
+        model_path = Path(__file__).parent / 'models'
 
-    # Add metadata
-    model_data = {
-        'model': model,
-        'symbol': symbol,
-        'trained_at': datetime.now().isoformat(),
-        'version': config.MODEL_VERSION,
-        'metadata': metadata,
-    }
+    model_path = Path(model_path)
+    model_path.mkdir(parents=True, exist_ok=True)
 
     # Save model
-    joblib.dump(model_data, model_path)
+    model_file = model_path / f'{stock_symbol}_model.pkl'
+    joblib.dump(model, model_file)
 
-    logger.info(f"Model saved to {model_path}")
+    # Save metadata
+    metadata_file = model_path / f'{stock_symbol}_metadata.json'
+    with open(metadata_file, 'w') as f:
+        json.dump(metadata, f, indent=2, default=str)
 
-    return str(model_path)
+    print(f"\n✓ Model saved: {model_file}")
+    print(f"✓ Metadata saved: {metadata_file}")
+
+    return str(model_file)
 
 
-def main(symbol: str):
+def train_model(stock_symbol: str, config_json: str):
     """
-    Main training pipeline
+    Main training function
 
     Args:
-        symbol: Stock symbol
+        stock_symbol: Stock ticker symbol
+        config_json: JSON string with configuration
 
     Returns:
-        Dictionary of training results
+        Dictionary with training results
     """
     try:
-        # Prepare data
-        X_train, X_test, y_train, y_test, feature_names, df_with_features = prepare_data(symbol)
+        # Parse configuration
+        config = json.loads(config_json)
 
-        # Train model
-        model = train_xgboost_model(X_train, y_train, X_test, y_test)
+        print("\n" + "="*60)
+        print(f"TRAINING MODEL FOR {stock_symbol}")
+        print("="*60)
+        print(f"Configuration: {config.get('name', 'Custom')}")
 
-        # Evaluate model
-        evaluation = evaluate_model(model, X_train, y_train, X_test, y_test)
+        # 1. Load data
+        print("\n[1/5] Loading data...")
+        df = load_stock_data(stock_symbol)
+        print(f"Loaded {len(df)} days of data")
+
+        # 2. Engineer features
+        print("\n[2/5] Engineering features...")
+        df_features = engineer_features(df, config)
+        print(f"Created {df_features.shape[1] - 6} features")
+
+        # 3. Prepare training data
+        print("\n[3/5] Preparing training data...")
+        train_split = config['hyperparameters'].get('train_test_split', 0.8)
+        X_train, X_test, y_train, y_test, feature_names = prepare_training_data(
+            df_features,
+            config,
+            train_size=train_split
+        )
+
+        # 4. Train model
+        print("\n[4/5] Training model...")
+        model = train_xgboost_model(
+            X_train, y_train,
+            X_test, y_test,
+            config['hyperparameters']
+        )
 
         # Get feature importance
-        feature_importance = get_feature_importance(model, feature_names)
+        feature_importance_df = get_feature_importance_report(model, feature_names, top_n=20)
+
+        print(f"\nTop 10 Most Important Features:")
+        for idx, row in feature_importance_df.head(10).iterrows():
+            print(f"  {row['feature']:25s}: {row['importance']:.4f}")
+
+        # 5. Save model
+        print("\n[5/5] Saving model...")
+
+        # Calculate additional metrics
+        test_pred = model.predict(X_test)
+        test_pred_proba = model.predict_proba(X_test)
+
+        # Calculate prediction confidence stats
+        confidence_scores = test_pred_proba.max(axis=1)
+        avg_confidence = confidence_scores.mean()
 
         # Prepare metadata
         metadata = {
-            'train_samples': int(len(X_train)),
-            'test_samples': int(len(X_test)),
-            'num_features': int(len(feature_names)),
-            'train_accuracy': evaluation['train_metrics']['accuracy'],
-            'test_accuracy': evaluation['test_metrics']['accuracy'],
-            'feature_names': feature_names,
-        }
-
-        # Save model
-        model_path = save_model(model, symbol, metadata)
-
-        # Prepare results
-        result = {
-            'success': True,
-            'symbol': symbol,
-            'model_path': model_path,
-            'model_version': config.MODEL_VERSION,
+            'stock_symbol': stock_symbol,
             'trained_at': datetime.now().isoformat(),
-            'data_summary': {
-                'total_samples': int(len(df_with_features)),
-                'train_samples': int(len(X_train)),
-                'test_samples': int(len(X_test)),
-                'num_features': int(len(feature_names)),
-            },
-            'train_metrics': evaluation['train_metrics'],
-            'test_metrics': evaluation['test_metrics'],
-            'feature_importance': dict(list(feature_importance.items())[:10]),  # Top 10
+            'model_version': '2.0_daytrading',
+            'train_size': len(X_train),
+            'test_size': len(X_test),
+            'train_accuracy': float(accuracy_score(y_train, model.predict(X_train))),
+            'test_accuracy': float(accuracy_score(y_test, test_pred)),
+            'avg_confidence': float(avg_confidence),
+            'num_features': len(feature_names),
+            'features_used': feature_names,
+            'feature_importance': feature_importance_df.to_dict('records'),
+            'hyperparameters': config['hyperparameters'],
+            'features_enabled': config.get('features_enabled', {}),
+            'target_type': config.get('target_type', 'open_to_close'),
+            'target_distribution_test': {
+                'down': int(np.sum(y_test == 0)),
+                'up': int(np.sum(y_test == 1))
+            }
         }
 
-        logger.info("Training pipeline complete")
+        model_path = save_model(model, stock_symbol, metadata)
 
-        return result
+        # Prepare results for Laravel
+        results = {
+            'success': True,
+            'stock_symbol': stock_symbol,
+            'model_path': model_path,
+            'train_accuracy': metadata['train_accuracy'],
+            'test_accuracy': metadata['test_accuracy'],
+            'avg_confidence': metadata['avg_confidence'],
+            'num_features': len(feature_names),
+            'top_features': feature_importance_df.head(10).to_dict('records'),
+            'trained_at': metadata['trained_at']
+        }
+
+        print("\n" + "="*60)
+        print("✓ TRAINING COMPLETE")
+        print("="*60)
+        print(f"Model: {stock_symbol}_model.pkl")
+        print(f"Test Accuracy: {results['test_accuracy']*100:.2f}%")
+        print(f"Avg Confidence: {results['avg_confidence']*100:.2f}%")
+
+        # Return as JSON for Laravel to parse
+        return results
 
     except Exception as e:
-        return handle_error(e, "TRAINING_ERROR")
+        print(f"\n❌ ERROR during training: {str(e)}")
+        import traceback
+        traceback.print_exc()
+
+        return {
+            'success': False,
+            'error': str(e),
+            'stock_symbol': stock_symbol
+        }
 
 
-if __name__ == "__main__":
-    if len(sys.argv) < 2:
-        print("Usage: python train_model.py <SYMBOL>")
-        print("Example: python train_model.py AAPL")
+if __name__ == '__main__':
+    """
+    Command line interface
+    Usage: python train_model.py AAPL '{"hyperparameters": {...}, "features_enabled": {...}}'
+    """
+    if len(sys.argv) < 3:
+        print("Usage: python train_model.py STOCK_SYMBOL CONFIG_JSON")
+        print("Example: python train_model.py AAPL '{\"hyperparameters\": {\"n_estimators\": 100}}'")
         sys.exit(1)
 
-    symbol = sys.argv[1].upper()
+    stock_symbol = sys.argv[1]
+    config_json = sys.argv[2]
 
-    # Run training
-    result = main(symbol)
+    # Train model
+    results = train_model(stock_symbol, config_json)
 
-    # Output results as JSON
-    save_results(result)
-
-    # Exit with appropriate code
-    sys.exit(0 if result.get('success', False) else 1)
+    # Print results as JSON (Laravel will parse this)
+    print("\n" + "="*60)
+    print("RESULTS (JSON)")
+    print("="*60)
+    print(json.dumps(results, indent=2))

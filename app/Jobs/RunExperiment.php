@@ -115,11 +115,11 @@ class RunExperiment implements ShouldQueue
             'win_rate' => $tradingMetrics['win_rate'] ?? 0,
             'total_return' => $tradingMetrics['total_return_pct'] ?? 0,
             'total_profit_loss' => $tradingMetrics['total_return_dollars'] ?? 0,
-            'accuracy_percentage' => $modelMetrics['accuracy'] ?? 0,
+            'accuracy_percentage' => ($modelMetrics['accuracy'] ?? 0) * 100,
             'sharpe_ratio' => $tradingMetrics['sharpe_ratio'] ?? null,
             'max_drawdown' => $tradingMetrics['max_drawdown'] ?? null,
             'profit_factor' => $tradingMetrics['profit_factor'] ?? null,
-            'avg_profit_per_trade' => $tradingMetrics['avg_win'] ?? 0,
+            'avg_profit_per_trade' => $tradingMetrics['avg_profit_per_trade'] ?? 0,
             'avg_loss_per_trade' => $tradingMetrics['avg_loss'] ?? 0,
             'largest_win' => $tradingMetrics['largest_win'] ?? null,
             'largest_loss' => $tradingMetrics['largest_loss'] ?? null,
@@ -137,9 +137,12 @@ class RunExperiment implements ShouldQueue
         $totalLosingTrades = 0;
         $totalReturn = 0;
         $sharpeRatios = [];
+        $accuracies = [];
 
         foreach ($allResults as $result) {
             $metrics = $result['trading_metrics'];
+            $predictionMetrics = $result['prediction_metrics'] ?? [];
+
             $totalTrades += $metrics['total_trades'] ?? 0;
             $totalWinningTrades += $metrics['winning_trades'] ?? 0;
             $totalLosingTrades += $metrics['losing_trades'] ?? 0;
@@ -148,11 +151,16 @@ class RunExperiment implements ShouldQueue
             if (isset($metrics['sharpe_ratio'])) {
                 $sharpeRatios[] = $metrics['sharpe_ratio'];
             }
+
+            if (isset($predictionMetrics['accuracy'])) {
+                $accuracies[] = $predictionMetrics['accuracy'] * 100; // Convert to percentage
+            }
         }
 
         $stockCount = count($allResults);
         $avgReturn = $stockCount > 0 ? $totalReturn / $stockCount : 0;
         $avgSharpe = count($sharpeRatios) > 0 ? array_sum($sharpeRatios) / count($sharpeRatios) : null;
+        $avgAccuracy = count($accuracies) > 0 ? array_sum($accuracies) / count($accuracies) : 0;
         $winRate = $totalTrades > 0 ? ($totalWinningTrades / $totalTrades) * 100 : 0;
 
         return [
@@ -161,16 +169,20 @@ class RunExperiment implements ShouldQueue
                 'winning_trades' => $totalWinningTrades,
                 'losing_trades' => $totalLosingTrades,
                 'win_rate' => round($winRate, 2),
+                'accuracy' => round($avgAccuracy, 2),
                 'total_return' => round($avgReturn, 2),
                 'avg_sharpe_ratio' => $avgSharpe ? round($avgSharpe, 2) : null,
                 'stocks_tested' => $stockCount,
             ],
             'per_stock' => array_map(function ($result) {
+                $predictionMetrics = $result['prediction_metrics'] ?? [];
+
                 return [
                     'symbol' => $result['stock_symbol'] ?? 'N/A',
                     'return' => $result['trading_metrics']['total_return_pct'] ?? 0,
                     'trades' => $result['trading_metrics']['total_trades'] ?? 0,
                     'win_rate' => $result['trading_metrics']['win_rate'] ?? 0,
+                    'accuracy' => isset($predictionMetrics['accuracy']) ? round($predictionMetrics['accuracy'] * 100, 2) : 0,
                 ];
             }, $allResults),
         ];

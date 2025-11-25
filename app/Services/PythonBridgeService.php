@@ -94,7 +94,7 @@ class PythonBridgeService
         }
 
         // Prepare CSV file path
-        $csvFilename = "{$stock->symbol}_data.csv";
+        $csvFilename = "{$stock->symbol}.csv";
         $csvPath = base_path("python/data/{$csvFilename}");
 
         // Ensure directory exists
@@ -145,13 +145,53 @@ class PythonBridgeService
         // Export data first
         $csvPath = $this->exportStockData($stock);
 
-        // Build Python command
+        // Use default configuration if not provided
+        if (empty($config)) {
+            $config = [
+                'name' => 'Default Configuration',
+                'hyperparameters' => [
+                    'n_estimators' => 100,
+                    'max_depth' => 5,
+                    'learning_rate' => 0.1,
+                    'subsample' => 0.8,
+                    'colsample_bytree' => 0.8,
+                    'train_test_split' => 0.8,
+                ],
+                'features_enabled' => [
+                    'sma_10' => true,
+                    'sma_50' => true,
+                    'sma_200' => true,
+                    'ema_12' => true,
+                    'ema_26' => true,
+                    'rsi_7' => true,
+                    'rsi_14' => true,
+                    'rsi_21' => true,
+                    'macd' => true,
+                    'macd_signal' => true,
+                    'macd_histogram' => true,
+                    'bb_upper' => true,
+                    'bb_middle' => true,
+                    'bb_lower' => true,
+                    'bb_width' => true,
+                    'atr' => true,
+                    'stochastic_k' => true,
+                    'stochastic_d' => true,
+                    'volume_ratio' => true,
+                    'obv' => true,
+                ],
+                'target_type' => 'open_to_close',
+            ];
+        }
+
+        // Build Python command with config JSON
         $scriptPath = "{$this->scriptsPath}/train_model.py";
+        $configJson = json_encode($config);
         $command = sprintf(
-            '%s %s %s 2>&1',
+            '%s %s %s %s 2>&1',
             escapeshellarg($this->pythonPath),
             escapeshellarg($scriptPath),
-            escapeshellarg($stock->symbol)
+            escapeshellarg($stock->symbol),
+            escapeshellarg($configJson)
         );
 
         Log::debug("Executing Python command: {$command}");

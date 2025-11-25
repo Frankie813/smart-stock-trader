@@ -30,7 +30,7 @@ def load_data_from_csv(symbol: str, filename: Optional[str] = None) -> pd.DataFr
 
     Args:
         symbol: Stock symbol (e.g., 'AAPL')
-        filename: Optional custom filename. Defaults to {symbol}_data.csv
+        filename: Optional custom filename. Defaults to {symbol}.csv
 
     Returns:
         DataFrame with stock data
@@ -40,7 +40,7 @@ def load_data_from_csv(symbol: str, filename: Optional[str] = None) -> pd.DataFr
         ValueError: If CSV is empty or malformed
     """
     if filename is None:
-        filename = f"{symbol}_data.csv"
+        filename = f"{symbol}.csv"
 
     filepath = DATA_DIR / filename
 
@@ -114,21 +114,24 @@ def calculate_trading_metrics(trades_df: pd.DataFrame) -> Dict[str, float]:
 
     total_trades = len(trades_df)
     total_profit_loss = trades_df['profit_loss'].sum()
-    win_rate = trades_df['was_correct'].mean() * 100
+    # Win rate = % of PROFITABLE trades (not prediction accuracy)
+    win_rate = (trades_df['profit_loss'] > 0).mean() * 100
     avg_profit_per_trade = trades_df['profit_loss'].mean()
 
     # Calculate Sharpe Ratio (annualized, assuming 252 trading days)
-    returns = trades_df['profit_loss']
+    # Use percentage returns, not dollar amounts
+    returns = trades_df['profit_loss_pct'] / 100  # Convert to decimal
     if returns.std() != 0:
         sharpe_ratio = (returns.mean() / returns.std()) * np.sqrt(252)
     else:
         sharpe_ratio = 0.0
 
-    # Calculate Maximum Drawdown
+    # Calculate Maximum Drawdown (percentage-based)
+    # Returns are already in decimal form (0.02 = 2%)
     cumulative_returns = returns.cumsum()
     running_max = cumulative_returns.cummax()
     drawdown = cumulative_returns - running_max
-    max_drawdown = drawdown.min()
+    max_drawdown = drawdown.min() * 100  # Convert to percentage
 
     # Calculate largest win and loss
     largest_win = trades_df['profit_loss'].max() if not trades_df.empty else 0.0

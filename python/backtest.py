@@ -6,6 +6,7 @@ Usage: python backtest.py AAPL
 """
 
 import sys
+import json
 import logging
 from datetime import datetime
 from pathlib import Path
@@ -15,7 +16,7 @@ import numpy as np
 import joblib
 
 import config
-from feature_engineering import engineer_features, get_feature_columns
+from feature_engineering import engineer_features, get_feature_list
 from utils import (
     logger,
     load_data_from_csv,
@@ -37,13 +38,14 @@ def load_model(symbol: str):
         symbol: Stock symbol
 
     Returns:
-        Loaded model data dictionary
+        Tuple of (model, metadata)
 
     Raises:
         FileNotFoundError: If model file doesn't exist
     """
     model_filename = f"{symbol}_model.pkl"
     model_path = config.MODELS_DIR / model_filename
+    metadata_path = config.MODELS_DIR / f"{symbol}_metadata.json"
 
     if not model_path.exists():
         raise FileNotFoundError(
@@ -52,21 +54,30 @@ def load_model(symbol: str):
 
     logger.info(f"Loading model from {model_path}")
 
-    model_data = joblib.load(model_path)
+    # Load the model
+    model = joblib.load(model_path)
 
-    logger.info(f"Model loaded. Version: {model_data.get('version', 'unknown')}")
-    logger.info(f"Trained at: {model_data.get('trained_at', 'unknown')}")
+    # Load metadata if it exists
+    metadata = {}
+    if metadata_path.exists():
+        with open(metadata_path, 'r') as f:
+            metadata = json.load(f)
+        logger.info(f"Model loaded. Version: {metadata.get('model_version', 'unknown')}")
+        logger.info(f"Trained at: {metadata.get('trained_at', 'unknown')}")
+    else:
+        logger.warning(f"Metadata file not found: {metadata_path}")
 
-    return model_data
+    return model, metadata
 
 
-def prepare_backtest_data(symbol: str, model_data: dict):
+def prepare_backtest_data(symbol: str, metadata: dict, config: dict):
     """
     Load and prepare data for backtesting
 
     Args:
         symbol: Stock symbol
-        model_data: Loaded model data
+        metadata: Model metadata dictionary
+        config: Feature engineering configuration
 
     Returns:
         Tuple of (df_features, X, y, feature_names)
@@ -77,10 +88,10 @@ def prepare_backtest_data(symbol: str, model_data: dict):
     df = load_data_from_csv(symbol)
 
     # Engineer features (same as training)
-    df_features = engineer_features(df, include_target=True)
+    df_features = engineer_features(df, config)
 
     # Get feature columns (must match training features)
-    feature_names = model_data['metadata']['feature_names']
+    feature_names = metadata.get('features_used', get_feature_list(df_features))
 
     # Prepare features and target
     X = df_features[feature_names].values
@@ -124,28 +135,32 @@ def simulate_trading(df_features: pd.DataFrame, predictions: np.ndarray,
             entry_price = row['open']
             exit_price = row['close']
 
-            # Calculate profit/loss
-            profit_loss = exit_price - entry_price
-            profit_loss_pct = (profit_loss / entry_price) * 100
+            # Realistic position sizing: buy as many shares as capital allows
+            shares = int(capital // entry_price)  # Floor division for whole shares
 
-            # Determine if prediction was correct
-            was_correct = (prediction == actual)
+            if shares > 0:  # Only trade if we can afford at least 1 share
+                # Calculate profit/loss based on actual position size
+                profit_loss = (exit_price - entry_price) * shares
+                profit_loss_pct = ((exit_price - entry_price) / entry_price) * 100
 
-            # Update capital
-            capital += profit_loss
+                # Determine if prediction was correct
+                was_correct = (prediction == actual)
 
-            trades.append({
-                'date': row['date'] if 'date' in row else None,
-                'prediction': int(prediction),
-                'actual': int(actual),
-                'confidence': float(confidence),
-                'entry_price': float(entry_price),
-                'exit_price': float(exit_price),
-                'profit_loss': float(profit_loss),
-                'profit_loss_pct': float(profit_loss_pct),
-                'was_correct': bool(was_correct),
-                'capital': float(capital),
-            })
+                # Update capital
+                capital += profit_loss
+
+                trades.append({
+                    'date': row['date'] if 'date' in row else None,
+                    'prediction': int(prediction),
+                    'actual': int(actual),
+                    'confidence': float(confidence),
+                    'entry_price': float(entry_price),
+                    'exit_price': float(exit_price),
+                    'profit_loss': float(profit_loss),
+                    'profit_loss_pct': float(profit_loss_pct),
+                    'was_correct': bool(was_correct),
+                    'capital': float(capital),
+                })
 
     trades_df = pd.DataFrame(trades)
 
@@ -243,11 +258,18 @@ def main(symbol: str, initial_capital: float = 10000.0):
     """
     try:
         # Load trained model
-        model_data = load_model(symbol)
-        model = model_data['model']
+        model, metadata = load_model(symbol)
+
+        # Reconstruct config from metadata (needed for feature engineering)
+        config = {
+            'name': metadata.get('model_version', 'Unknown'),
+            'hyperparameters': metadata.get('hyperparameters', {}),
+            'features_enabled': metadata.get('features_enabled', {}),
+            'target_type': metadata.get('target_type', 'open_to_close')
+        }
 
         # Prepare backtest data
-        df_features, X, y, feature_names = prepare_backtest_data(symbol, model_data)
+        df_features, X, y, feature_names = prepare_backtest_data(symbol, metadata, config)
 
         # Make predictions
         logger.info("Making predictions...")
@@ -277,9 +299,10 @@ def main(symbol: str, initial_capital: float = 10000.0):
         result = {
             'success': True,
             'symbol': symbol,
+            'stock_symbol': symbol,
             'backtested_at': datetime.now().isoformat(),
-            'model_version': model_data.get('version', 'unknown'),
-            'model_trained_at': model_data.get('trained_at', 'unknown'),
+            'model_version': metadata.get('model_version', 'unknown'),
+            'model_trained_at': metadata.get('trained_at', 'unknown'),
             'data_summary': {
                 'total_samples': int(len(df_features)),
                 'num_features': int(len(feature_names)),

@@ -1,326 +1,536 @@
 """
-Feature engineering for stock price prediction
-Calculates technical indicators from OHLCV data
+Feature Engineering for Day Trading
+Calculates technical indicators optimized for intraday trading
 """
-
-import sys
-import logging
-from typing import Optional
 
 import pandas as pd
 import numpy as np
-from ta.trend import SMAIndicator, EMAIndicator, MACD, ADXIndicator
-from ta.momentum import RSIIndicator, StochasticOscillator, ROCIndicator
-from ta.volatility import BollingerBands, AverageTrueRange
-from ta.volume import OnBalanceVolumeIndicator, VolumePriceTrendIndicator
-
-from config import TECHNICAL_INDICATORS, REQUIRED_COLUMNS
-from utils import logger, validate_dataframe
-
-# Configure logging
-logger = logging.getLogger(__name__)
+from typing import Dict, List
+import warnings
+warnings.filterwarnings('ignore')
 
 
-def add_moving_averages(df: pd.DataFrame) -> pd.DataFrame:
-    """Add Simple Moving Averages (SMA) and Exponential Moving Averages (EMA)"""
-    close = df['close']
-
-    # Simple Moving Averages
-    for period in TECHNICAL_INDICATORS['sma_periods']:
-        indicator = SMAIndicator(close=close, window=period, fillna=True)
-        df[f'sma_{period}'] = indicator.sma_indicator()
-
-    # Exponential Moving Averages
-    for period in TECHNICAL_INDICATORS['ema_periods']:
-        indicator = EMAIndicator(close=close, window=period, fillna=True)
-        df[f'ema_{period}'] = indicator.ema_indicator()
-
-    logger.info("Added moving averages")
-    return df
-
-
-def add_rsi(df: pd.DataFrame) -> pd.DataFrame:
-    """Add Relative Strength Index (RSI) for multiple periods"""
-    close = df['close']
-
-    for period in TECHNICAL_INDICATORS['rsi_periods']:
-        indicator = RSIIndicator(close=close, window=period, fillna=True)
-        df[f'rsi_{period}'] = indicator.rsi()
-
-    logger.info("Added RSI indicators")
-    return df
-
-
-def add_macd(df: pd.DataFrame) -> pd.DataFrame:
-    """Add MACD (Moving Average Convergence Divergence)"""
-    close = df['close']
-
-    macd = MACD(
-        close=close,
-        window_fast=TECHNICAL_INDICATORS['macd_fast'],
-        window_slow=TECHNICAL_INDICATORS['macd_slow'],
-        window_sign=TECHNICAL_INDICATORS['macd_signal'],
-        fillna=True
-    )
-
-    df['macd'] = macd.macd()
-    df['macd_signal'] = macd.macd_signal()
-    df['macd_diff'] = macd.macd_diff()
-
-    logger.info("Added MACD indicators")
-    return df
-
-
-def add_bollinger_bands(df: pd.DataFrame) -> pd.DataFrame:
-    """Add Bollinger Bands"""
-    close = df['close']
-
-    bb = BollingerBands(
-        close=close,
-        window=TECHNICAL_INDICATORS['bb_period'],
-        window_dev=TECHNICAL_INDICATORS['bb_std'],
-        fillna=True
-    )
-
-    df['bb_high'] = bb.bollinger_hband()
-    df['bb_mid'] = bb.bollinger_mavg()
-    df['bb_low'] = bb.bollinger_lband()
-    df['bb_width'] = bb.bollinger_wband()
-    df['bb_pct'] = bb.bollinger_pband()
-
-    logger.info("Added Bollinger Bands")
-    return df
-
-
-def add_atr(df: pd.DataFrame) -> pd.DataFrame:
-    """Add Average True Range (ATR)"""
-    atr = AverageTrueRange(
-        high=df['high'],
-        low=df['low'],
-        close=df['close'],
-        window=TECHNICAL_INDICATORS['atr_period'],
-        fillna=True
-    )
-
-    df['atr'] = atr.average_true_range()
-
-    logger.info("Added ATR")
-    return df
-
-
-def add_adx(df: pd.DataFrame) -> pd.DataFrame:
-    """Add Average Directional Index (ADX)"""
-    adx = ADXIndicator(
-        high=df['high'],
-        low=df['low'],
-        close=df['close'],
-        window=TECHNICAL_INDICATORS['adx_period'],
-        fillna=True
-    )
-
-    df['adx'] = adx.adx()
-    df['adx_pos'] = adx.adx_pos()
-    df['adx_neg'] = adx.adx_neg()
-
-    logger.info("Added ADX")
-    return df
-
-
-def add_stochastic_oscillator(df: pd.DataFrame) -> pd.DataFrame:
-    """Add Stochastic Oscillator"""
-    stoch = StochasticOscillator(
-        high=df['high'],
-        low=df['low'],
-        close=df['close'],
-        window=14,
-        smooth_window=3,
-        fillna=True
-    )
-
-    df['stoch_k'] = stoch.stoch()
-    df['stoch_d'] = stoch.stoch_signal()
-
-    logger.info("Added Stochastic Oscillator")
-    return df
-
-
-def add_roc(df: pd.DataFrame) -> pd.DataFrame:
-    """Add Rate of Change (ROC)"""
-    roc = ROCIndicator(close=df['close'], window=12, fillna=True)
-    df['roc'] = roc.roc()
-
-    logger.info("Added ROC")
-    return df
-
-
-def add_volume_indicators(df: pd.DataFrame) -> pd.DataFrame:
-    """Add volume-based indicators"""
-    # Volume change rate
-    df['volume_change'] = df['volume'].pct_change().fillna(0)
-
-    # Volume moving average (20-day)
-    df['volume_sma_20'] = df['volume'].rolling(window=20).mean().bfill()
-
-    # On-Balance Volume (OBV)
-    obv = OnBalanceVolumeIndicator(close=df['close'], volume=df['volume'], fillna=True)
-    df['obv'] = obv.on_balance_volume()
-
-    # Volume Price Trend
-    vpt = VolumePriceTrendIndicator(close=df['close'], volume=df['volume'], fillna=True)
-    df['vpt'] = vpt.volume_price_trend()
-
-    logger.info("Added volume indicators")
-    return df
-
-
-def add_price_features(df: pd.DataFrame) -> pd.DataFrame:
-    """Add price-based features"""
-    # Daily return
-    df['daily_return'] = df['close'].pct_change().fillna(0)
-
-    # High-Low range
-    df['high_low_range'] = (df['high'] - df['low']) / df['close']
-
-    # Gap (difference between open and previous close)
-    df['gap'] = (df['open'] - df['close'].shift(1)) / df['close'].shift(1)
-    df['gap'] = df['gap'].fillna(0)
-
-    # Price momentum (5-day)
-    df['momentum_5'] = df['close'].diff(5).fillna(0)
-
-    # Close position within high-low range
-    df['close_position'] = (df['close'] - df['low']) / (df['high'] - df['low'])
-    df['close_position'] = df['close_position'].fillna(0.5)
-
-    logger.info("Added price features")
-    return df
-
-
-def add_target_variable(df: pd.DataFrame) -> pd.DataFrame:
+def calculate_rsi(series: pd.Series, period: int = 14) -> pd.Series:
     """
-    Create target variable: 1 if next day close is higher than today's close, 0 otherwise
+    Calculate Relative Strength Index (RSI)
+
+    Args:
+        series: Price series (typically close prices)
+        period: Lookback period (default 14)
+
+    Returns:
+        RSI values (0-100)
     """
-    df['next_close'] = df['close'].shift(-1)
-    df['target'] = (df['next_close'] > df['close']).astype(int)
+    delta = series.diff()
+    gain = (delta.where(delta > 0, 0)).rolling(window=period).mean()
+    loss = (-delta.where(delta < 0, 0)).rolling(window=period).mean()
 
-    # Remove the last row (no next day data)
-    df = df[:-1].copy()
+    rs = gain / loss
+    rsi = 100 - (100 / (1 + rs))
 
-    logger.info("Added target variable")
-    return df
+    return rsi
 
 
-def engineer_features(df: pd.DataFrame, include_target: bool = True) -> pd.DataFrame:
+def calculate_macd(series: pd.Series, fast: int = 12, slow: int = 26, signal: int = 9) -> tuple:
     """
-    Apply all feature engineering steps
+    Calculate MACD (Moving Average Convergence Divergence)
+
+    Args:
+        series: Price series (typically close prices)
+        fast: Fast EMA period (default 12)
+        slow: Slow EMA period (default 26)
+        signal: Signal line period (default 9)
+
+    Returns:
+        Tuple of (macd_line, signal_line, histogram)
+    """
+    ema_fast = series.ewm(span=fast, adjust=False).mean()
+    ema_slow = series.ewm(span=slow, adjust=False).mean()
+
+    macd_line = ema_fast - ema_slow
+    signal_line = macd_line.ewm(span=signal, adjust=False).mean()
+    histogram = macd_line - signal_line
+
+    return macd_line, signal_line, histogram
+
+
+def calculate_bollinger_bands(series: pd.Series, period: int = 20, std_dev: int = 2) -> tuple:
+    """
+    Calculate Bollinger Bands
+
+    Args:
+        series: Price series
+        period: Moving average period (default 20)
+        std_dev: Number of standard deviations (default 2)
+
+    Returns:
+        Tuple of (upper_band, middle_band, lower_band)
+    """
+    middle_band = series.rolling(window=period).mean()
+    std = series.rolling(window=period).std()
+
+    upper_band = middle_band + (std * std_dev)
+    lower_band = middle_band - (std * std_dev)
+
+    return upper_band, middle_band, lower_band
+
+
+def calculate_atr(df: pd.DataFrame, period: int = 14) -> pd.Series:
+    """
+    Calculate Average True Range (ATR)
+
+    Args:
+        df: DataFrame with high, low, close columns
+        period: Lookback period (default 14)
+
+    Returns:
+        ATR values
+    """
+    high_low = df['high'] - df['low']
+    high_close = np.abs(df['high'] - df['close'].shift())
+    low_close = np.abs(df['low'] - df['close'].shift())
+
+    ranges = pd.concat([high_low, high_close, low_close], axis=1)
+    true_range = np.max(ranges, axis=1)
+
+    atr = true_range.rolling(period).mean()
+
+    return atr
+
+
+def add_intraday_features(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Add intraday price action features
+
+    These features capture what happens DURING the trading day,
+    which is critical for day trading.
 
     Args:
         df: DataFrame with OHLCV data
-        include_target: Whether to include target variable (use False for prediction)
 
     Returns:
-        DataFrame with engineered features
+        DataFrame with added intraday features
     """
-    logger.info("Starting feature engineering...")
+    # Opening gap from previous close
+    df['gap_pct'] = (df['open'] - df['close'].shift(1)) / df['close'].shift(1) * 100
+    df['gap_direction'] = (df['gap_pct'] > 0).astype(int)  # 1 = gap up, 0 = gap down
+    df['gap_size'] = df['gap_pct'].abs()
 
-    # Validate input data
-    validate_dataframe(df, REQUIRED_COLUMNS)
+    # Intraday range and volatility
+    df['intraday_range_pct'] = (df['high'] - df['low']) / df['open'] * 100
+    df['intraday_high_pct'] = (df['high'] - df['open']) / df['open'] * 100
+    df['intraday_low_pct'] = (df['open'] - df['low']) / df['open'] * 100
+
+    # Close position within the day's range
+    # 0 = closed at low, 1 = closed at high
+    df['close_position'] = (df['close'] - df['low']) / (df['high'] - df['low'] + 0.0001)
+
+    # Candle body and shadow analysis
+    df['body_size_pct'] = np.abs(df['close'] - df['open']) / df['open'] * 100
+    df['upper_shadow_pct'] = (df['high'] - df[['close', 'open']].max(axis=1)) / df['open'] * 100
+    df['lower_shadow_pct'] = (df[['close', 'open']].min(axis=1) - df['low']) / df['open'] * 100
+
+    # Actual day trading returns (open to close)
+    df['open_to_close_pct'] = (df['close'] - df['open']) / df['open'] * 100
+    df['open_to_high_pct'] = (df['high'] - df['open']) / df['open'] * 100
+    df['open_to_low_pct'] = (df['open'] - df['low']) / df['open'] * 100
+
+    # Candle pattern indicators
+    df['is_green_candle'] = (df['close'] > df['open']).astype(int)
+    df['is_red_candle'] = (df['close'] < df['open']).astype(int)
+    df['is_doji'] = (df['body_size_pct'] < 0.1).astype(int)  # Small body
+
+    # Ratio of body to total range
+    df['body_to_range_ratio'] = df['body_size_pct'] / (df['intraday_range_pct'] + 0.0001)
+
+    return df
+
+
+def add_technical_indicators(df: pd.DataFrame, config: Dict) -> pd.DataFrame:
+    """
+    Add technical indicators based on configuration
+
+    Args:
+        df: DataFrame with OHLCV data
+        config: Configuration dict with features_enabled
+
+    Returns:
+        DataFrame with added technical indicators
+    """
+    features = config.get('features_enabled', {})
+
+    # Moving Averages
+    if features.get('sma_10'):
+        df['sma_10'] = df['close'].rolling(window=10).mean()
+        df['price_vs_sma10'] = (df['close'] - df['sma_10']) / df['sma_10'] * 100
+
+    if features.get('sma_50'):
+        df['sma_50'] = df['close'].rolling(window=50).mean()
+        df['price_vs_sma50'] = (df['close'] - df['sma_50']) / df['sma_50'] * 100
+        df['above_sma50'] = (df['close'] > df['sma_50']).astype(int)
+
+    if features.get('sma_200'):
+        df['sma_200'] = df['close'].rolling(window=200).mean()
+        df['price_vs_sma200'] = (df['close'] - df['sma_200']) / df['sma_200'] * 100
+        df['above_sma200'] = (df['close'] > df['sma_200']).astype(int)
+
+    # Exponential Moving Averages
+    if features.get('ema_12'):
+        df['ema_12'] = df['close'].ewm(span=12, adjust=False).mean()
+        df['price_vs_ema12'] = (df['close'] - df['ema_12']) / df['ema_12'] * 100
+
+    if features.get('ema_26'):
+        df['ema_26'] = df['close'].ewm(span=26, adjust=False).mean()
+        df['price_vs_ema26'] = (df['close'] - df['ema_26']) / df['ema_26'] * 100
+
+    # RSI (Relative Strength Index)
+    if features.get('rsi_7'):
+        df['rsi_7'] = calculate_rsi(df['close'], 7)
+
+    if features.get('rsi_14'):
+        df['rsi_14'] = calculate_rsi(df['close'], 14)
+        df['rsi_oversold'] = (df['rsi_14'] < 30).astype(int)
+        df['rsi_overbought'] = (df['rsi_14'] > 70).astype(int)
+        df['rsi_neutral'] = ((df['rsi_14'] >= 40) & (df['rsi_14'] <= 60)).astype(int)
+
+    if features.get('rsi_21'):
+        df['rsi_21'] = calculate_rsi(df['close'], 21)
+
+    # MACD
+    if features.get('macd') or features.get('macd_signal') or features.get('macd_histogram'):
+        macd, signal, histogram = calculate_macd(df['close'])
+
+        if features.get('macd'):
+            df['macd'] = macd
+            df['macd_positive'] = (macd > 0).astype(int)
+
+        if features.get('macd_signal'):
+            df['macd_signal'] = signal
+
+        if features.get('macd_histogram'):
+            df['macd_histogram'] = histogram
+            df['macd_histogram_positive'] = (histogram > 0).astype(int)
+            df['macd_histogram_increasing'] = (histogram > histogram.shift(1)).astype(int)
+
+    # Bollinger Bands
+    if any([features.get('bb_upper'), features.get('bb_middle'), features.get('bb_lower')]):
+        upper, middle, lower = calculate_bollinger_bands(df['close'])
+
+        if features.get('bb_upper'):
+            df['bb_upper'] = upper
+
+        if features.get('bb_middle'):
+            df['bb_middle'] = middle
+
+        if features.get('bb_lower'):
+            df['bb_lower'] = lower
+
+        if features.get('bb_width'):
+            df['bb_width_pct'] = (upper - lower) / middle * 100
+            df['bb_squeeze'] = (df['bb_width_pct'] < df['bb_width_pct'].rolling(20).mean()).astype(int)
+
+        # Bollinger Band position
+        df['bb_position'] = (df['close'] - lower) / (upper - lower + 0.0001)
+        df['bb_above_upper'] = (df['close'] > upper).astype(int)
+        df['bb_below_lower'] = (df['close'] < lower).astype(int)
+
+    # ATR (Average True Range)
+    if features.get('atr'):
+        df['atr'] = calculate_atr(df, 14)
+        df['atr_pct'] = df['atr'] / df['close'] * 100
+        df['volatility_high'] = (df['atr_pct'] > df['atr_pct'].rolling(20).mean()).astype(int)
+
+    # Stochastic Oscillator
+    if features.get('stochastic_k') or features.get('stochastic_d'):
+        period = 14
+        low_min = df['low'].rolling(window=period).min()
+        high_max = df['high'].rolling(window=period).max()
+
+        stoch_k = 100 * (df['close'] - low_min) / (high_max - low_min + 0.0001)
+
+        if features.get('stochastic_k'):
+            df['stochastic_k'] = stoch_k
+
+        if features.get('stochastic_d'):
+            df['stochastic_d'] = stoch_k.rolling(window=3).mean()
+
+    return df
+
+
+def add_volume_indicators(df: pd.DataFrame, config: Dict) -> pd.DataFrame:
+    """
+    Add volume-based indicators
+
+    Args:
+        df: DataFrame with volume data
+        config: Configuration dict
+
+    Returns:
+        DataFrame with volume indicators
+    """
+    features = config.get('features_enabled', {})
+
+    if features.get('volume_ratio'):
+        df['volume_sma_20'] = df['volume'].rolling(window=20).mean()
+        df['volume_ratio'] = df['volume'] / (df['volume_sma_20'] + 1)
+        df['volume_surge'] = (df['volume_ratio'] > 1.5).astype(int)
+        df['volume_dry'] = (df['volume_ratio'] < 0.5).astype(int)
+
+    if features.get('obv'):
+        # On-Balance Volume
+        obv = (np.sign(df['close'].diff()) * df['volume']).fillna(0).cumsum()
+        df['obv'] = obv
+        df['obv_sma'] = obv.rolling(window=20).mean()
+        df['obv_increasing'] = (obv > obv.shift(1)).astype(int)
+
+    return df
+
+
+def add_multi_timeframe_features(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Add features from multiple timeframes
+
+    Args:
+        df: DataFrame with price data
+
+    Returns:
+        DataFrame with multi-timeframe features
+    """
+    # Short-term returns (momentum)
+    df['return_1d'] = df['close'].pct_change(1) * 100
+    df['return_2d'] = df['close'].pct_change(2) * 100
+    df['return_3d'] = df['close'].pct_change(3) * 100
+    df['return_5d'] = df['close'].pct_change(5) * 100
+
+    # Medium-term returns (trend)
+    df['return_10d'] = df['close'].pct_change(10) * 100
+    df['return_20d'] = df['close'].pct_change(20) * 100
+
+    # Volatility across timeframes
+    df['volatility_5d'] = df['close'].pct_change().rolling(5).std() * 100
+    df['volatility_20d'] = df['close'].pct_change().rolling(20).std() * 100
+
+    # Trend strength
+    df['trend_strength_10d'] = df['close'] / df['close'].rolling(10).mean()
+    df['trend_strength_20d'] = df['close'] / df['close'].rolling(20).mean()
+
+    # Price patterns
+    df['higher_highs_3d'] = (df['high'] > df['high'].shift(1)).rolling(3).sum()
+    df['lower_lows_3d'] = (df['low'] < df['low'].shift(1)).rolling(3).sum()
+
+    # Consecutive up/down days
+    df['consecutive_up'] = (df['close'] > df['close'].shift(1)).astype(int)
+    df['consecutive_down'] = (df['close'] < df['close'].shift(1)).astype(int)
+
+    return df
+
+
+def add_time_features(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Add time-based features
+
+    Markets behave differently on different days of the week
+
+    Args:
+        df: DataFrame with date column
+
+    Returns:
+        DataFrame with time features
+    """
+    df['date'] = pd.to_datetime(df['date'])
+    df['day_of_week'] = df['date'].dt.dayofweek
+
+    # Day of week dummies
+    df['is_monday'] = (df['day_of_week'] == 0).astype(int)
+    df['is_tuesday'] = (df['day_of_week'] == 1).astype(int)
+    df['is_wednesday'] = (df['day_of_week'] == 2).astype(int)
+    df['is_thursday'] = (df['day_of_week'] == 3).astype(int)
+    df['is_friday'] = (df['day_of_week'] == 4).astype(int)
+
+    # Week of month (1-5)
+    df['week_of_month'] = (df['date'].dt.day - 1) // 7 + 1
+
+    # Month (1-12)
+    df['month'] = df['date'].dt.month
+
+    return df
+
+
+def create_target_variable(df: pd.DataFrame, target_type: str = 'open_to_close') -> pd.DataFrame:
+    """
+    Create target variable for prediction
+
+    Args:
+        df: DataFrame with price data
+        target_type: Type of target to create
+            - 'open_to_close': Predict if tomorrow closes above open (day trading)
+            - 'close_to_close': Predict if tomorrow closes above today (traditional)
+            - 'threshold': Predict if tomorrow gains > X% from open
+
+    Returns:
+        DataFrame with target column
+    """
+    if target_type == 'open_to_close':
+        # Day trading target: Will tomorrow close above its open?
+        df['target'] = (df['close'].shift(-1) > df['open'].shift(-1)).astype(int)
+
+    elif target_type == 'close_to_close':
+        # Traditional target: Will tomorrow close above today's close?
+        df['target'] = (df['close'].shift(-1) > df['close']).astype(int)
+
+    elif target_type == 'threshold':
+        # Threshold target: Will tomorrow gain at least 1% from open to close?
+        threshold = 0.01  # 1%
+        tomorrow_return = (df['close'].shift(-1) - df['open'].shift(-1)) / df['open'].shift(-1)
+        df['target'] = (tomorrow_return > threshold).astype(int)
+
+    return df
+
+
+def engineer_features(df: pd.DataFrame, config: Dict) -> pd.DataFrame:
+    """
+    Main feature engineering function
+
+    Orchestrates all feature engineering steps for day trading
+
+    Args:
+        df: DataFrame with OHLCV data (columns: date, open, high, low, close, volume)
+        config: Configuration dictionary with:
+            - features_enabled: Dict of which features to calculate
+            - target_type: Type of target variable
+
+    Returns:
+        DataFrame with all engineered features and target variable
+    """
+    print(f"Starting feature engineering...")
+    print(f"Input shape: {df.shape}")
 
     # Make a copy to avoid modifying original
     df = df.copy()
 
-    # Sort by date
-    if 'date' in df.columns:
-        df = df.sort_values('date').reset_index(drop=True)
+    # Sort by date to ensure proper time series order
+    df = df.sort_values('date').reset_index(drop=True)
 
-    # Add all features
-    df = add_moving_averages(df)
-    df = add_rsi(df)
-    df = add_macd(df)
-    df = add_bollinger_bands(df)
-    df = add_atr(df)
-    df = add_adx(df)
-    df = add_stochastic_oscillator(df)
-    df = add_roc(df)
-    df = add_volume_indicators(df)
-    df = add_price_features(df)
+    # 1. Add intraday features (MOST IMPORTANT FOR DAY TRADING!)
+    print("Adding intraday features...")
+    df = add_intraday_features(df)
 
-    # Add target variable if requested
-    if include_target:
-        df = add_target_variable(df)
+    # 2. Add technical indicators
+    print("Adding technical indicators...")
+    df = add_technical_indicators(df, config)
 
-    # Drop any remaining NaN values
-    initial_count = len(df)
+    # 3. Add volume indicators
+    print("Adding volume indicators...")
+    df = add_volume_indicators(df, config)
+
+    # 4. Add multi-timeframe features
+    print("Adding multi-timeframe features...")
+    df = add_multi_timeframe_features(df)
+
+    # 5. Add time-based features
+    print("Adding time features...")
+    df = add_time_features(df)
+
+    # 6. Create target variable
+    print("Creating target variable...")
+    target_type = config.get('target_type', 'open_to_close')
+    df = create_target_variable(df, target_type)
+
+    # 7. Remove rows with NaN (from rolling calculations)
+    initial_rows = len(df)
     df = df.dropna()
-    final_count = len(df)
+    rows_dropped = initial_rows - len(df)
 
-    if initial_count - final_count > 0:
-        logger.warning(f"Dropped {initial_count - final_count} rows with NaN values")
-
-    logger.info(f"Feature engineering complete. Final shape: {df.shape}")
+    print(f"Dropped {rows_dropped} rows with NaN values")
+    print(f"Final shape: {df.shape}")
+    print(f"Features created: {df.shape[1] - 6}")  # Subtract OHLCV + date
 
     return df
 
 
-def get_feature_columns(df: pd.DataFrame) -> list:
+def get_feature_list(df: pd.DataFrame, exclude_cols: List[str] = None) -> List[str]:
     """
-    Get list of feature columns (excluding date, OHLCV, and target)
+    Get list of feature columns (excluding OHLCV, date, target)
 
     Args:
-        df: DataFrame with engineered features
+        df: DataFrame with features
+        exclude_cols: Additional columns to exclude
 
     Returns:
         List of feature column names
     """
-    exclude_cols = ['date', 'open', 'high', 'low', 'close', 'volume',
-                    'adjusted_close', 'target', 'next_close', 'stock_id',
-                    'id', 'created_at', 'updated_at']
+    if exclude_cols is None:
+        exclude_cols = []
 
-    feature_cols = [col for col in df.columns if col not in exclude_cols]
+    exclude = ['date', 'open', 'high', 'low', 'close', 'volume', 'target'] + exclude_cols
 
-    logger.info(f"Found {len(feature_cols)} feature columns")
+    features = [col for col in df.columns if col not in exclude]
 
-    return feature_cols
+    return features
 
 
-if __name__ == "__main__":
+def get_feature_importance_report(model, feature_names: List[str], top_n: int = 20) -> pd.DataFrame:
     """
-    Standalone usage: python feature_engineering.py AAPL
+    Get feature importance from trained model
+
+    Args:
+        model: Trained XGBoost model
+        feature_names: List of feature names
+        top_n: Number of top features to return
+
+    Returns:
+        DataFrame with feature importance
     """
-    if len(sys.argv) < 2:
-        print("Usage: python feature_engineering.py <SYMBOL>")
-        sys.exit(1)
+    importance = model.feature_importances_
 
-    symbol = sys.argv[1].upper()
+    feature_importance = pd.DataFrame({
+        'feature': feature_names,
+        'importance': importance
+    }).sort_values('importance', ascending=False)
 
-    try:
-        from utils import load_data_from_csv, save_results
-        import config
+    return feature_importance.head(top_n)
 
-        # Load data
-        df = load_data_from_csv(symbol)
 
-        # Engineer features
-        df_with_features = engineer_features(df, include_target=True)
+if __name__ == '__main__':
+    """
+    Test the feature engineering pipeline
+    """
+    # Create sample data for testing
+    dates = pd.date_range('2023-01-01', periods=300, freq='D')
 
-        # Save to CSV
-        output_file = f"{symbol}_features.csv"
-        output_path = config.DATA_DIR / output_file
-        df_with_features.to_csv(output_path, index=False)
+    sample_data = pd.DataFrame({
+        'date': dates,
+        'open': np.random.randn(300).cumsum() + 100,
+        'high': np.random.randn(300).cumsum() + 102,
+        'low': np.random.randn(300).cumsum() + 98,
+        'close': np.random.randn(300).cumsum() + 100,
+        'volume': np.random.randint(1000000, 10000000, 300)
+    })
 
-        # Return success
-        result = {
-            'success': True,
-            'symbol': symbol,
-            'rows': len(df_with_features),
-            'features': len(get_feature_columns(df_with_features)),
-            'output_file': str(output_path),
-        }
+    # Sample configuration
+    config = {
+        'features_enabled': {
+            'sma_10': True,
+            'sma_50': True,
+            'rsi_14': True,
+            'macd': True,
+            'bb_width': True,
+            'atr': True,
+            'volume_ratio': True,
+        },
+        'target_type': 'open_to_close'
+    }
 
-        save_results(result)
+    # Engineer features
+    engineered_df = engineer_features(sample_data, config)
 
-    except Exception as e:
-        from utils import handle_error
-        error_result = handle_error(e, "FEATURE_ENGINEERING_ERROR")
-        save_results(error_result)
-        sys.exit(1)
+    # Print summary
+    print("\n" + "="*60)
+    print("FEATURE ENGINEERING SUMMARY")
+    print("="*60)
+    print(f"Total features: {len(get_feature_list(engineered_df))}")
+    print(f"Usable rows: {len(engineered_df)}")
+    print(f"\nTarget distribution:")
+    print(engineered_df['target'].value_counts())
+    print(f"\nSample features:")
+    print(get_feature_list(engineered_df)[:20])
